@@ -1,0 +1,247 @@
+---
+title: "Homework 4"
+author: "Narjes Mathlouthi"
+output:
+    html_document:
+      toc: true
+      toc_float: true
+      code_folding: show
+---
+
+### Loading Packages
+
+We load `tidymodels` for modeling functions, `ISLR` and `ISLR2` for data sets, and the `tidyverse`.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE,
+                      warning = FALSE)
+library(tidymodels)
+library(discrim)
+library(ISLR)
+library(ISLR2)
+library(tidyverse)
+tidymodels_prefer()
+```
+
+## Resampling
+
+For this assignment, we will continue working with part of a [Kaggle data set](https://www.kaggle.com/c/titanic/overview) that was the subject of a machine learning competition and is often used for practicing ML models. The goal is classification; specifically, to predict which passengers would survive the [Titanic shipwreck](https://en.wikipedia.org/wiki/Titanic).
+
+![Fig. 1: RMS Titanic departing Southampton on April 10, 1912.](images/RMS_Titanic.jpg){width="363"}
+
+Load the data from `data/titanic.csv` into *R* and familiarize yourself with the variables it contains using the codebook (`data/titanic_codebook.txt`).
+
+Notice that `survived` and `pclass` should be changed to factors. When changing `survived` to a factor, you may want to reorder the factor so that *"Yes"* is the first level.
+
+Make sure you load the `tidyverse` and `tidymodels`!
+
+*Remember that you'll need to set a seed at the beginning of the document to reproduce your results.*
+
+```{r message=FALSE, warning=FALSE}
+set.seed(3435) # can be any number
+
+titanic <- read_csv(file = "data/titanic.csv") %>% 
+  mutate(survived = factor(survived, 
+                           levels = c("Yes", "No")),
+         pclass = factor(pclass))
+```
+
+
+### Question 1
+
+Split the data, stratifying on the outcome variable, `survived.`  You should choose the proportions to split the data into. Verify that the training and testing data sets have the appropriate number of observations. 
+
+
+```{r}
+titanic_split <- titanic %>% 
+  initial_split(strata = survived, prop = 0.7)
+titanic_train <- training(titanic_split)
+titanic_test <- testing(titanic_split)
+```
+
+Create a recipe for this dataset **identical** to the recipe you used in Homework 3.
+
+```{r}
+titanic_recipe <- recipe(survived ~ pclass + sex + age + 
+                           sib_sp + parch + fare, titanic_train) %>% 
+  step_impute_linear(age, impute_with = imp_vars(sib_sp)) %>% 
+  # choice of predictors to impute with is up to you
+  step_dummy(all_nominal_predictors()) %>% 
+  step_interact(~ starts_with("sex"):age + age:fare)
+```
+
+
+### Question 2
+
+Fold the **training** data. Use *k*-fold cross-validation, with $k = 10$.
+
+This can be done using the `vfold_cv()` function. The function here uses `v` instead of `k`, which is the terminology of ISLR. Common choices for k/v are 5 or 10. Here, we use 10 folds.
+
+```{r}
+folds <- vfold_cv(titanic_train, v = 10)
+
+```
+
+
+### Question 3
+
+* In your own words, explain what we are doing in Question 2. What is *k*-fold cross-validation? Why should we use it, rather than simply fitting and testing models on the entire training set? If we **did** use the entire training set, what resampling method would that be?
+
+Using our model training data `titanic_train`, we use *k*-fold cross-validation.This approach involves randomly diving the set of observations into *k* groups or folds with the first fold representing the validation set and fitting the model to the remaining *k-1*. In question 2, we assign a value for **k** which in this instance we have defined as 10. This implies, that `titanic_train` will be split into `k = 10` partitions of equal size. The model will will be fit on *k - 1* (or 9 folds) that will be used for training, while one is used for testing aka the validation set. This process is repeated **k** times, with a different partition used for testing each time.
+
+For each split, the same model is trained, and performance is displayed per fold. For evaluation purposes, we can also average it across all folds. While this produces better estimates, *k*-fold CV also increases training cost: in the *k* = 10 scenario above, the model must be trained for 10 times. This becomes less efficient when we have larger datasets.
+
+Why should we use it, rather than simply fitting and testing models on the entire training set?
+
+*k*-fold CV increases the training set via resampling
+This is useful when  we have a small dataset and we want to estimate how the model would perform by minimizing bias and avoiding overfitting.
+
+If we did use the entire training set, we should use the Bootstrap resampling method.
+
+
+### Question 4
+
+Set up workflows for 3 models:
+How many models, total, across all folds, will you be fitting to the data? To answer, think about how many folds there are, and how many models you'll fit to each fold.
+
+1. A logistic regression with the `glm` engine;
+```{r}
+log_reg <- logistic_reg() %>% 
+  set_engine("glm") %>% 
+  set_mode("classification") 
+
+log_wkflow <- workflow() %>% 
+  add_model(log_reg) %>% 
+  add_recipe(titanic_recipe)
+```
+
+2. A linear discriminant analysis with the `MASS` engine;
+
+```{r}
+lda_mod <- discrim_linear() %>% 
+  set_mode("classification") %>% 
+  set_engine("MASS")
+
+lda_wkflow <- workflow() %>% 
+  add_model(lda_mod) %>% 
+  add_recipe(titanic_recipe)
+```
+
+3. A quadratic discriminant analysis with the `MASS` engine.
+
+```{r}
+qda_mod <- discrim_quad() %>% 
+  set_mode("classification") %>% 
+  set_engine("MASS")  
+  
+
+qda_wkflow <- workflow() %>% 
+  add_model(qda_mod) %>% 
+  add_recipe(titanic_recipe)
+```
+
+We are using 3 models (i.e. logistic, linear and quadratic discriminant analysis). Using *k*-fold CV, we split the data into 10 folds. Therefore, the total number of models across folds is 30.
+
+### Question 5
+
+Fit each of the models created in Question 4 to the folded data.
+
+**IMPORTANT:** *Some models may take a while to run – anywhere from 3 to 10 minutes. You should NOT re-run these models each time you knit. Instead, run them once, using an R script, and store your results; look into the use of [loading and saving](https://www.r-bloggers.com/2017/04/load-save-and-rda-files/). You should still include the code to run them when you knit, but set `eval = FALSE` in the code chunks.*
+
+```{r}
+log_fit <-fit_resamples(log_wkflow,folds)
+lda_fit<-fit_resamples(lda_wkflow,folds)
+qda_fit <-fit_resamples(qda_wkflow,folds)
+
+```
+
+
+### Question 6
+
+Use `collect_metrics()` to print the mean and standard errors of the performance metric *accuracy* across all folds for each of the four models.
+
+```{r}
+log_fit_metrics <- collect_metrics(log_fit)
+lda_fit_metrics <- collect_metrics(lda_fit)
+qda_fit_metrics <- collect_metrics(qda_fit)
+```
+
+
+Decide which of the 3 fitted models has performed the best. Explain why. *(Note: You should consider both the mean accuracy and its standard error.)*
+
+The logistic model performed the best given that it has the highest mean accuracy and low standard error. 
+
+
+### Question 7
+
+Now that you’ve chosen a model, fit your chosen model to the entire training dataset (not to the folds).
+
+```{r}
+final_fit <- fit(log_wkflow, titanic_train)
+```
+
+
+### Question 8
+
+Finally, with your fitted model, use `predict()`, `bind_cols()`, and `accuracy()` to assess your model’s performance on the testing data!
+
+Compare your model’s testing accuracy to its average accuracy across folds. Describe what you see.
+
+```{r, results='hide'}
+log_pred <- predict(final_fit, new_data = titanic_test, type = "class")
+bind_cols(log_pred,titanic_test$survived)
+train_acc <- augment(final_fit, new_data = titanic_train) %>%
+  accuracy(truth = survived, estimate = .pred_class)
+test_acc <- augment(final_fit, new_data = titanic_test) %>%
+  accuracy(truth = survived, estimate = .pred_class)
+
+```
+
+The testing accuracy is `r round(test_acc[[3]],2)` is slightly higher than the mean accuracy across folds `r round(collect_metrics(log_fit)[[3]][1],3)`. The model fits slightly better to the testing set rather than to the randomized training set resulting from fitting each of the 10 folds. This could be do to the variation in the observed data that arise from iterations on the training set.
+
+
+## Required for 231 Students
+
+Consider the following intercept-only model, with $\epsilon \sim N(0, \sigma^2)$:
+
+$$
+Y=\beta+\epsilon
+$$
+
+where $\beta$ is the parameter that we want to estimate. Suppose that we have $n$ observations of the response, i.e. $y_{1}, ..., y_{n}$, with uncorrelated errors.
+
+### Question 9
+
+Derive the least-squares estimate of $\beta$.
+
+
+$$\sum_{i=1}^n (y_{i} - \beta - \epsilon)^2$$
+We have mean of $\epsilon=0$, then we get
+$$\sum_{i=1}^n (y_{i} - \beta)^2$$
+To find the least value, we take the derivative
+$$2\sum_{i=1}^n (y_{i} - \beta)=0$$
+$$n\hat\beta=\sum_{i=1}^n y_i$$
+
+$$\hat\beta=\frac{\sum_{i=1}^n y_i}{n}$$
+
+### Question 10
+
+Suppose that we perform leave-one-out cross-validation (LOOCV). Recall that, in LOOCV, we divide the data into $n$ folds. What is the covariance between $\hat{\beta}^{(1)}$, or the least-squares estimator of $\beta$ that we obtain by taking the first fold as a training set, and $\hat{\beta}^{(2)}$, the least-squares estimator of $\beta$ that we obtain by taking the second fold as a training set?
+
+
+We start by taking the first fold
+$$\hat{\beta}^{(1)}=\frac{\sum_{i=2}^n y_i}{n-1}$$
+
+Computing a second fold gives the below 
+$$\hat{\beta}^{(2)}=\frac{y_1+\sum_{i=3}^n y_i}{n-1}$$
+
+$$Cov(\hat\beta_1,\hat\beta_2)=Cov(\frac{\sum_{i=2}^n y_i}{n-1},\frac{y_1+\sum_{i=3}^n y_i}{n-1})
+=\frac{Cov(\sum_{i=2}^n y_i,y_1+\sum_{i=3}^n y_i)} {n-1}$$
+And since we have uncorrelated error, this implies 
+
+$Cov(y_i,y_j)=var(y_i)$ if i=j, $Cov(y_i,y_j)=0$ if $i\neq j$ 
+
+$$Cov(\hat\beta_1,\hat\beta_2)=Cov(\frac{\sum_{i=2}^n y_i}{n-1},\frac{y_1+\sum_{i=3}^n y_i}{n-1})
+=\frac{Cov(\sum_{i=2}^n y_i,y_1+\sum_{i=3}^n y_i)} {n-1}=\frac{(n-2)\sigma^2}{n-1}$$
+
+
